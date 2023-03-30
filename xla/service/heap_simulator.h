@@ -394,6 +394,9 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
   using BufferIntervalCompare =
       std::function<bool(const BufferInterval&, const BufferInterval&)>;
 
+  // TODO(b/275905276): create a SlicedBufferInterval that contains a
+  // BufferInterval
+
   explicit GlobalDecreasingSizeBestFitHeap(int64_t alignment,
                                            Type type = kSpatial);
   ~GlobalDecreasingSizeBestFitHeap() override {}
@@ -414,6 +417,8 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
   // Returns the buffer intervals sorted according to buffer_interval_compare_.
   std::vector<BufferInterval> GetSortedBufferIntervals() const;
 
+  // TODO(b/275905276): change FindChunkCandidate signature to take a
+  // SlicedBufferInterval and return a vector of chunks
   // These two methods below are exposed to other heap algorithms that inherit
   // from this class. The Finish() method tries to find a candidate chunk for
   // each BufferInterval, after calling GetSortedBufferIntervals. If a
