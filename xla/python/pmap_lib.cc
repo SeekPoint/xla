@@ -194,8 +194,8 @@ xla::StatusOr<ShardArgResult> ShardArg(
 
       TF_ASSIGN_OR_RETURN(
           xla::DevicePutResult on_device,
-          DevicePut(arg[indices[i]], to_device.client->ifrt_client(),
-                    to_device.contents, options));
+          DevicePut(arg[indices[i]], to_device.client_ptr()->ifrt_client(),
+                    to_device.get(), options));
 
       per_device_arrays.push_back(std::move(on_device.ifrt_array));
       devices.push_back(per_device_arrays.back()->sharding().devices().front());

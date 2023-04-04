@@ -280,7 +280,7 @@ StatusOr<py::object> PyBuffer::CopyToDevice(
       tsl::RCReference<ifrt::Array> out,
       IfrtHelpers::CopyToDevice(ifrt_array(), dst_device.get()));
   auto traceback = Traceback::Get();
-  return Make(dst_device.client, std::move(out), std::move(traceback));
+  return Make(dst_device.client(), std::move(out), std::move(traceback));
 }
 
 std::pair<Status, bool> PyBuffer::CopyToRemoteDevice(

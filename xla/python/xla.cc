@@ -131,6 +131,55 @@ bool IsTsan() {
 // IsSanitized reports whether the build is under any sanitizer.
 bool IsSanitized() { return IsAsan() || IsMsan() || IsTsan(); }
 
+class PjRtCompileOnlyDevice : public PjRtDevice {
+ public:
+  PjRtCompileOnlyDevice(
+      absl::flat_hash_map<std::string, PjRtDeviceAttribute> attrs)
+      : attrs_(std::move(attrs)) {}
+  virtual PjRtClient* client() const override { return nullptr; }
+
+  template <typename T>
+  const T& GetAttr(std::string_view name) const {
+    auto it = attrs_.find(name);
+    CHECK(it != attrs_.end()) << "Could not find required attr: " << name;
+    return std::get<T>(it->second);
+  }
+
+  virtual bool IsAddressable() const override { return false; }
+  virtual int id() const override { return GetAttr<int64_t>("id"); }
+  int process_index() const override {
+    return GetAttr<int64_t>("process_index");
+  }
+  int local_hardware_id() const override { return -1; }
+  absl::string_view device_kind() const override {
+    return GetAttr<std::string>("device_kind");
+  }
+  absl::string_view DebugString() const override { return debug_string_; }
+  absl::string_view ToString() const override { return debug_string_; }
+  std::unique_ptr<ScopedAsyncTrackingEvent> CreateAsyncTrackingEvent(
+      absl::string_view description) const override {
+    return nullptr;
+  }
+  Status TransferToInfeed(const LiteralSlice& literal) override {
+    return Unimplemented("TransferToInfeed is not supported");
+  }
+  Status TransferFromOutfeed(MutableBorrowingLiteral literal) override {
+    return Unimplemented("TransferFromOutfeed is not supported");
+  }
+  const absl::flat_hash_map<std::string, PjRtDeviceAttribute>& Attributes()
+      const override {
+    return attrs_;
+  }
+  virtual StatusOr<tsl::AllocatorStats> GetAllocatorStats() const {
+    return Unimplemented("GetAllocatorStats is not supported");
+  }
+
+ private:
+  absl::flat_hash_map<std::string, PjRtDeviceAttribute> attrs_;
+  std::string debug_string_ = {
+      absl::StrCat("PjRtCompileOnlyDevice(id=", id(), ")")};
+};
+
 }  // namespace
 
 PYBIND11_MODULE(xla_extension, m) {
@@ -186,12 +235,13 @@ PYBIND11_MODULE(xla_extension, m) {
                              "Deprecated; please use process_index")
       .def_property_readonly("platform",
                              [](const ClientAndPtr<PjRtDevice>& device) {
-                               return device.client->platform_name();
+                               return device.client_ptr()->platform_name();
                              })
       .def_property_readonly("device_kind", &PjRtDevice::device_kind)
-      .def_property_readonly(
-          "client",
-          [](const ClientAndPtr<PjRtDevice>& device) { return device.client; })
+      .def_property_readonly("client",
+                             [](const ClientAndPtr<PjRtDevice>& device) {
+                               return device.client();
+                             })
       .def("__str__", &PjRtDevice::DebugString)
       .def("__repr__", &PjRtDevice::ToString)
       .def("transfer_to_infeed",
@@ -223,7 +273,7 @@ PYBIND11_MODULE(xla_extension, m) {
              PythonDeprecationWarning(
                  "Per device live_buffers() is going to be deprecated. Please "
                  "use the jax.live_arrays() for jax.Arrays instead.");
-             return device.client->LiveBuffersOnDevice(device.get());
+             return device.client()->LiveBuffersOnDevice(device.get());
            })
       .def(
           "__getattr__",
@@ -778,7 +828,26 @@ PYBIND11_MODULE(xla_extension, m) {
         "Decodes an uncompressed pprof Profile protocol buffer into a JSON "
         "representation");
 
+  py::class_<PjRtCompileOnlyDevice, PjRtDevice,
+             ClientAndPtr<PjRtCompileOnlyDevice>>
+      hacky_device(m, "CompileOnlyDevice", py::dynamic_attr());
+  hacky_device.def_property_readonly(
+      "client", [](py::object obj) { return obj.attr("__dict__")["client"]; });
+
   py::class_<PjRtDeviceTopology>(m, "DeviceTopology")
+      .def("make_fake_devices",
+           [](PjRtDeviceTopology& topology) {
+             auto result = topology.DeviceAttributes();
+             std::vector<ClientAndPtr<PjRtCompileOnlyDevice>> devices;
+             if (result.has_value()) {
+               for (auto& attrs : *result) {
+                 devices.push_back(ClientAndPtr<PjRtCompileOnlyDevice>(
+                     WrapWithoutClient(std::make_shared<PjRtCompileOnlyDevice>(
+                         std::move(attrs)))));
+               }
+             }
+             return devices;
+           })
       .def_property_readonly(
           "platform",
           [](PjRtDeviceTopology& topology) { return topology.platform_name(); })
@@ -792,7 +861,8 @@ PYBIND11_MODULE(xla_extension, m) {
                              });
 
   py::class_<PjRtExecutable, std::shared_ptr<PjRtExecutable>>(m, "Executable")
-      .def("hlo_modules", &PjRtExecutable::GetHloModules)
+      .def("hlo_modules",
+           xla::ValueOrThrowWrapper(&PjRtExecutable::GetHloModules))
       .def("get_output_shardings", &PjRtExecutable::GetOutputShardings)
       .def("get_parameter_shardings", &PjRtExecutable::GetParameterShardings)
       .def("get_compiled_memory_stats", &PjRtExecutable::GetCompiledMemoryStats)

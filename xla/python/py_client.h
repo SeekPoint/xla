@@ -73,12 +73,24 @@ struct ClientAndPtr {
   ClientAndPtr& operator=(const ClientAndPtr&) = default;
   ClientAndPtr& operator=(ClientAndPtr&&) = default;
 
-  std::shared_ptr<PyClient> client;
-  T* contents;
+  PyClient* client_ptr() const { return client_; }
 
-  T* get() const { return contents; }
-  T* operator->() const { return contents; }
-  T& operator*() const { return *contents; }
+  std::shared_ptr<PyClient> client() const {
+    return std::shared_ptr<PyClient>(contents_, client_);
+  }
+
+  T* get() const { return contents_.get(); }
+  T* operator->() const { return contents_.get(); }
+  T& operator*() const { return *contents_; }
+
+ private:
+  template <typename U>
+  friend ClientAndPtr<U> WrapWithClient(std::shared_ptr<PyClient> client,
+                                        U* contents);
+  template <typename U>
+  friend ClientAndPtr<U> WrapWithoutClient(std::shared_ptr<U> contents);
+  std::shared_ptr<T> contents_;
+  PyClient* client_;
 };
 
 // By defining a templated helper function, we can use return type deduction
@@ -86,8 +98,15 @@ struct ClientAndPtr {
 template <typename T>
 ClientAndPtr<T> WrapWithClient(std::shared_ptr<PyClient> client, T* contents) {
   ClientAndPtr<T> result;
-  result.client = std::move(client);
-  result.contents = contents;
+  result.client_ = client.get();
+  result.contents_ = std::shared_ptr<T>(std::move(client), contents);
+  return result;
+}
+template <typename T>
+ClientAndPtr<T> WrapWithoutClient(std::shared_ptr<T> contents) {
+  ClientAndPtr<T> result;
+  result.client_ = nullptr;
+  result.contents_ = std::move(contents);
   return result;
 }
 

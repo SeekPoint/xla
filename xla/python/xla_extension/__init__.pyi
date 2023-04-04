@@ -576,6 +576,7 @@ class DeviceTopology:
   platform: str
   platform_version: str
   device_attributes: List[Dict[str, Any]]
+  def make_fake_devices(self) -> List[Device]: ...
 
 def compile(topology: DeviceTopology, mlir_module: str) -> Executable: ...
 
