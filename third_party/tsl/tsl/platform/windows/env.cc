@@ -53,7 +53,7 @@ class StdThread : public Thread {
  public:
   // thread_options is ignored.
   StdThread(const ThreadOptions& thread_options, const string& name,
-            std::function<void()> fn)
+            Env::Closure fn)
       : thread_(fn) {
     mutex_lock l(name_mutex);
     GetThreadNameRegistry().emplace(thread_.get_id(), name);
@@ -98,7 +98,7 @@ class WindowsEnv : public Env {
   void SleepForMicroseconds(int64 micros) override { Sleep(micros / 1000); }
 
   Thread* StartThread(const ThreadOptions& thread_options, const string& name,
-                      std::function<void()> fn) override {
+                      Env::Closure fn) override {
     return new StdThread(thread_options, name, fn);
   }
 
@@ -120,14 +120,13 @@ class WindowsEnv : public Env {
   static VOID CALLBACK SchedClosureCallback(PTP_CALLBACK_INSTANCE Instance,
                                             PVOID Context, PTP_WORK Work) {
     CloseThreadpoolWork(Work);
-    std::function<void()>* f = (std::function<void()>*)Context;
+    Env::Closure* f = (Env::Closure*)Context;
     (*f)();
     delete f;
   }
-  void SchedClosure(std::function<void()> closure) override {
+  void SchedClosure(Env::Closure closure) override {
     PTP_WORK work = CreateThreadpoolWork(
-        SchedClosureCallback, new std::function<void()>(std::move(closure)),
-        nullptr);
+        SchedClosureCallback, new Env::Closure(std::move(closure)), nullptr);
     SubmitThreadpoolWork(work);
   }
 
@@ -135,15 +134,15 @@ class WindowsEnv : public Env {
                                                  PVOID Context,
                                                  PTP_TIMER Timer) {
     CloseThreadpoolTimer(Timer);
-    std::function<void()>* f = (std::function<void()>*)Context;
+    Env::Closure* f = (Env::Closure*)Context;
     (*f)();
     delete f;
   }
 
-  void SchedClosureAfter(int64 micros, std::function<void()> closure) override {
-    PTP_TIMER timer = CreateThreadpoolTimer(
-        SchedClosureAfterCallback,
-        new std::function<void()>(std::move(closure)), nullptr);
+  void SchedClosureAfter(int64 micros, Env::Closure closure) override {
+    PTP_TIMER timer =
+        CreateThreadpoolTimer(SchedClosureAfterCallback,
+                              new Env::Closure(std::move(closure)), nullptr);
     // in 100 nanosecond units
     FILETIME FileDueTime;
     ULARGE_INTEGER ulDueTime;
