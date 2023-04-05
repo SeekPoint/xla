@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_HEAP_SIMULATOR_H_
 
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <set>
 #include <utility>
@@ -394,6 +395,54 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
   using BufferIntervalCompare =
       std::function<bool(const BufferInterval&, const BufferInterval&)>;
 
+  // A BufferInterval describing a buffer that should be allocated using
+  // spatially contiguous chunks. full_buffer_interval is not sliced if
+  // sorted_slices.empty().
+  //
+  // For example, instead of allocating A in space and time as illustrated on
+  // the left, we may wish to allocate A1 and A2 contiguously, (as illustrated
+  // on the right). Doing so allows us to free up allocation space between
+  // [s,i], but we only have the full allocation for A from [i,e].
+  //
+  //   ^
+  // s | +-----------+                 s |       +-----+
+  // p | |           |                 p |       |  A2 |
+  // a | |     A     |                 a | +-----+-----+
+  // c | |           |                 c | |     A1    |
+  // e | +-----------+                 e | +-----------+
+  //   --|-----------|------->           --|-----|-----|------->
+  //     s           e   time              s     i     e   time
+  struct SlicedBufferInterval {
+    // Represents a slice of full_buffer_interval that lives from start to
+    // full_buffer_interval.end.
+    struct IntervalSlice {
+      int64_t size;
+      int64_t start;
+    };
+
+    explicit SlicedBufferInterval(const BufferInterval& buffer_interval)
+        : full_buffer_interval(buffer_interval) {}
+    SlicedBufferInterval() = delete;
+
+    const BufferInterval& full_buffer_interval;
+
+    // Describes how full_buffer_interval should be sliced.
+    // slice 0:
+    //   * size = full_buffer_interval.size - sum_over_j(sorted_slices[j].size)
+    //   * lifetime = [full_buffer_interval.start, full_buffer_interval.end]
+    // slice i (for i > 0):
+    //   * size = sorted_slices[i].size
+    //   * lifetime = [sorted_slices[i].start, full_buffer_interval.end]
+    //
+    // The only requirement on the spatial ordering of the slices is that they
+    // form a contiguous spatial block of memory, once all allocations have been
+    // applied.
+    //
+    // sorted_slices is expected to be sorted according to
+    // sorted_slices[i].start < sorted_slices[i+1].start.
+    std::vector<IntervalSlice> sorted_slices;
+  };
+
   explicit GlobalDecreasingSizeBestFitHeap(int64_t alignment,
                                            Type type = kSpatial);
   ~GlobalDecreasingSizeBestFitHeap() override {}
@@ -414,6 +463,8 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
   // Returns the buffer intervals sorted according to buffer_interval_compare_.
   std::vector<BufferInterval> GetSortedBufferIntervals() const;
 
+  // TODO(b/275905276): change FindChunkCandidate signature to take a
+  // SlicedBufferInterval and return a vector of chunks
   // These two methods below are exposed to other heap algorithms that inherit
   // from this class. The Finish() method tries to find a candidate chunk for
   // each BufferInterval, after calling GetSortedBufferIntervals. If a
@@ -423,6 +474,13 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
   // heap size is within the limits.
   Chunk FindChunkCandidate(const BufferInterval& buffer_interval,
                            int64_t preferred_offset = -1) const;
+  // FindChunkCandidates is the same as FindChunkCandidate, except it finds
+  // spatially contiguous chunks candidates for a sliced buffer interval.
+  // Returned chunk i will correspond to slice i, as described in
+  // SlicedBufferInterval::sorted_slices.
+  std::vector<Chunk> FindChunkCandidates(
+      const SlicedBufferInterval& sliced_buffer_interval,
+      int64_t preferred_offset = -1) const;
   void CommitChunk(const BufferInterval& buffer_interval, Chunk chunk);
 
   // Adds the buffer and the chunk to the result chunk map.

@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/utils/hlo_live_range.h"
@@ -844,6 +845,25 @@ typename GlobalDecreasingSizeBestFitHeap<BufferType>::Chunk
 GlobalDecreasingSizeBestFitHeap<BufferType>::FindChunkCandidate(
     const GlobalDecreasingSizeBestFitHeap::BufferInterval& buffer_interval,
     int64_t preferred_offset) const {
+  SlicedBufferInterval sliced_buffer_interval(buffer_interval);
+  std::vector<Chunk> chunks =
+      FindChunkCandidates(sliced_buffer_interval, preferred_offset);
+  CHECK_EQ(chunks.size(), 1);
+  return chunks[0];
+}
+
+template <typename BufferType>
+std::vector<typename GlobalDecreasingSizeBestFitHeap<BufferType>::Chunk>
+GlobalDecreasingSizeBestFitHeap<BufferType>::FindChunkCandidates(
+    const SlicedBufferInterval& sliced_buffer_interval,
+    int64_t preferred_offset) const {
+  const BufferInterval& buffer_interval =
+      sliced_buffer_interval.full_buffer_interval;
+  // TODO(b/275905276): changes this method to account for slicing and remove
+  // the following check
+  CHECK(sliced_buffer_interval.sorted_slices.empty())
+      << "Chunk slicing is not yet supported.";
+
   VLOG(1) << "Finding chunks for buffer: "
           << buffer_interval.buffer->ToString();
   VLOG(1) << "Size " << buffer_interval.size << ", start "
@@ -867,6 +887,9 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::FindChunkCandidate(
   //   ||   |  |               |  |       |
   //   |+-a-+  +-------b-------+  +---c---+
   //   ----------------------------------------> time
+
+  // TODO(b/275905276): for slicing, build free_chunks for each consecutive time
+  // interval
 
   // Map free chunk offsets -> ends.
   // We use `greater` for the comparison so that we can use `lower_bound` to
@@ -930,6 +953,9 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::FindChunkCandidate(
         interval_tree_.ChunksOverlappingInTime(interval.start, interval.end));
   }
 
+  // TODO(b/275905276): for slicing, merge free_chunks for each slice time
+  // interval, to derive a final free_chunks that would fit the slice for all
+  // sliced time segments
   // Try to find a large enough free chunk containing the preferred offset.
   Chunk chunk{preferred_offset, max_colocation_size};
   auto it = (preferred_offset < 0) ? free_chunks.end()
@@ -943,7 +969,7 @@ GlobalDecreasingSizeBestFitHeap<BufferType>::FindChunkCandidate(
                             std::forward_as_tuple(b.second - b.first, b.first);
                    })->first;
   }
-  return chunk;
+  return {chunk};
 }
 
 template <typename BufferType>
